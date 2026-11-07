@@ -1,5 +1,5 @@
 ---
-name: atlas-test-design
+name: atlas-tools-test-design
 description: >
   Test-first design workflow for the atlas-tools workspace (Gualidan/atlas-tools)
   and repos structured like it. Covers all three crates: **atlas** (install,
