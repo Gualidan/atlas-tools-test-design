@@ -1,19 +1,23 @@
 ---
 name: atlas-test-design
 description: >
-  Test-first design workflow for the atlas package manager (Gualidan/atlas-tools)
-  and repos structured like it. Use BEFORE any implementation whenever the user
-  wants to introduce a change: a new feature, bug fix, refactor, or behavior
-  change touching install, update, uninstall, dependency resolution, the repo or
-  install databases, or filesystem mutation. Also trigger when the user asks for
-  "test cases" or "fixtures", says "I wanna add/change X", describes a change
-  idea and expects tests with it, or asks to review whether a change is testable.
-  Produces, in order: a failure audit of the planned change, a test scenario
-  matrix, reusable invariant asserts, fixture code, and test skeletons — and
-  stops for user confirmation after the scenario matrix.
+  Test-first design workflow for the atlas-tools workspace (Gualidan/atlas-tools)
+  and repos structured like it. Covers all three crates: **atlas** (install,
+  update, uninstall, dependency resolution, install database, filesystem
+  mutation), **sisyphus** (the build side: recipes, sandboxed builds, fetching,
+  artifact extraction, payload/metadata generation, signing, .sky file writing,
+  repo DB insertion), and **common** (shared types, sky verification, DB
+  schemas — the format contract between writer and reader). Use BEFORE any
+  implementation whenever the user wants to introduce a change in any of them:
+  a new feature, bug fix, refactor, or behavior change. Also trigger when the
+  user asks for "test cases" or "fixtures", says "I wanna add/change X",
+  describes a change idea and expects tests with it, or asks to review whether a
+  change is testable. Produces, in order: a failure audit of the planned change,
+  a test scenario matrix, reusable invariant asserts, fixture code, and test
+  skeletons — and stops for user confirmation after the scenario matrix.
 ---
 
-# Atlas test-first design
+# Atlas-tools test-first design
 
 ## Why this workflow exists
 
@@ -25,21 +29,48 @@ four: deciding while mutating, per-item values computed outside their loop,
 skip/keep decisions applied one hop instead of transitively, and rollback
 journals built while the filesystem was already changing.
 
+The build side adds a second failure family: sisyphus **writes** the format
+atlas **consumes**, so a change on one side silently breaks the other — and
+parts of sisyphus (libarchive, bubblewrap) cannot run in minimal environments,
+so tests can pass locally while never actually running in CI.
+
 This skill exists so that detection happens at design time, not in review.
 Follow the steps in order. The order is the point: audit before scenarios,
 scenarios before code, user confirmation before anything long.
 
 ## Step 0 — Ground yourself in the repo
 
-Before designing anything:
+The workspace is three crates with one artifact between them. Know which side
+of the line the change lives on before designing anything:
 
-1. Read `atlas/tests/fixtures/mod.rs`. Know the `Workspace` struct and its
-   helpers (`publish`, `install`, `uninstall`, `update`, the `assert_*`
-   family). New fixtures extend this style; never invent a parallel pattern.
-2. Read the module(s) the change touches, plus one level of callers. Note every
-   early exit, every database write, every filesystem mutation.
-3. If a file you need is not available, **ask for it**. Do not guess at APIs —
-   a test designed against an imagined API is worse than no test.
+- **`atlas/`** — the consumer. Installs, updates, uninstalls packages. Reads
+  `.sky` files, writes the install DB. Integration tests in `atlas/tests/*.rs`
+  share `atlas/tests/fixtures/mod.rs`: a `Workspace` struct with `publish`,
+  `install`, `uninstall`, `update` and the `assert_*` family. New atlas
+  fixtures extend this style; never invent a parallel pattern.
+- **`sisyphus/`** — the producer. Recipe → fetch (HTTP + archive cache) →
+  sandboxed build (bubblewrap) → artifact extraction → payload/metadata
+  generation (`sisyphus/src/package/`) → signing → `.sky` file → repo DB
+  insert. Its own tests live in `sisyphus/tests/` (`fetch_archive_cache.rs`,
+  `keygen.rs`, `repo_db.rs`, `source_root.rs`) — read the relevant one before
+  adding to it.
+- **`crates/common/`** — the contract. Shared types (metadata, manifest), sky
+  verification, DB schemas. `crates/common/tests/package_format.rs` is the
+  writer/reader contract test: if the change touches what a `.sky` file *is*,
+  this file changes too.
+
+Also: read the module(s) the change touches plus one level of callers, and note
+every early exit, database write, and filesystem mutation. If a file you need
+is not available, **ask for it** — a test designed against an imagined API is
+worse than no test.
+
+**Environment reality (affects sisyphus test design).** `compress-tools` needs
+system libarchive and builds run under bubblewrap — neither exists in minimal
+containers or CI images. Before proposing a test, know whether it can actually
+execute in CI: pure logic (recipe parsing, metadata generation, payload
+ordering, signing math) runs anywhere; archive round-trips and sandboxed builds
+do not. Design so the testable core is testable without system deps, isolate
+the rest, and say explicitly which proposed tests are environment-gated.
 
 Context you can rely on: packages are signed `.sky` files; the repo DB
 (`packages` table, with a `deps` column) is the source of truth for resolution;
@@ -51,7 +82,7 @@ stated in the test name.
 
 ## Step 1 — Failure audit of the planned change
 
-Do this before listing any test. Three walks:
+Do this before listing any test. Four walks:
 
 **The `?`-walk.** For every early exit (`?`, `return Err`) that sits *after*
 the first filesystem or database side effect, answer: what is left on disk and
@@ -71,6 +102,13 @@ especially DB query results. A query bound to the wrong name, or a variable
 declared before the loop, silently gives every record the same value. (This
 gave every update candidate the root package's sky path; verification then
 failed three modules away from the real bug.)
+
+**The contract walk (sisyphus ↔ atlas).** If the change touches package
+format, metadata/manifest types, sky structure, signing, or the DB schemas:
+name both ends explicitly — sisyphus's writer (`sisyphus/src/package/`) and
+atlas's reader (`verify`, `install`). A field added, renamed, or re-ordered on
+the write side must have a matching expectation on the read side, and that is
+*a test in `crates/common/tests/package_format.rs`*, not an assumption.
 
 Output: a numbered list of findings, each with the code location, the question
 that exposed it, and the invariant it threatens.
@@ -99,7 +137,11 @@ name | scenario | expected outcome | how it fails on the current code
 - **Every ordering-sensitive pass gets a reversed-order variant.**
 - **Boundaries**: `/` as an install root, a root that is a mount point, empty
   payload, same version with different release, explicit vs dependency install
-  reason, uninstall of a package nothing depends on.
+  reason, uninstall of a package nothing depends on. On the sisyphus side:
+  payload dirs that are only symlinks, empty payload dirs, artifact files with
+  unusual modes, recipes with missing/extra fields, a package whose name or
+  version contains characters that end up in filenames, archive entries in
+  non-sorted order.
 - **Mark the regression row** for each Step 1 finding.
 
 ## Gate — stop and confirm
@@ -125,7 +167,9 @@ test that calls none and asserts no invariant is probably not worth writing.
 
 ## Step 4 — Fixtures
 
-Extend `atlas/tests/fixtures/mod.rs` in the existing `Workspace` style:
+Extend the crate's existing fixture style — `atlas/tests/fixtures/mod.rs`
+(`Workspace`) for atlas changes, the corresponding `sisyphus/tests/` helpers
+for build-side changes:
 
 - **Unique identity everywhere**: payload path per package *and* version
   (`{name}/{version}.txt`), sky filename per package+version+release. Two
@@ -142,6 +186,15 @@ Extend `atlas/tests/fixtures/mod.rs` in the existing `Workspace` style:
 - **Assert your arrange**: seeding helpers read back counts; install helpers
   read back versions. An arrange that silently no-ops produces tests that
   assert nothing about the code under test.
+- **Contract tests are fixtures too**: a format change gets a round-trip case —
+  build the package with the sisyphus-side helpers, unpack and verify it with
+  the common/atlas-side helpers — in `crates/common/tests/package_format.rs`.
+  Writer-only or reader-only tests do not close the contract.
+- **Environment-gated tests are isolated and honest**: anything needing
+  libarchive or bubblewrap gets its own test file or clear marker, and the
+  scenario matrix says which proposed tests will not run in a minimal CI. A
+  test that silently compiles-but-never-runs in CI is a vacuous assert with
+  extra steps.
 
 ## Step 5 — Test skeletons
 
@@ -169,14 +222,19 @@ each one; when reviewing an implementation, ask its detection question.
 | Stale copy-paste literal | "Does every literal in this test derive from its own package?" | Disk asserts checked paths from a renamed package — vacuously true |
 | Vacuous assert | "What code change makes this assert fail?" | Asserts on paths that never existed |
 | Source disagreement assumed away | "Do repo DB and sky metadata agree in this arrange — on purpose?" | FK 787 during install, three steps from the cause |
+| Cross-crate format drift | "Does *both* the writer (sisyphus) and the reader (atlas) know about this format change?" | The writer/reader split is why `crates/common/tests/package_format.rs` exists — drift is caught there or not at all |
+| Environment-gated test that never runs | "Did this test actually execute in CI, or only compile there?" | sisyphus's libarchive/bubblewrap deps make whole suites unrunnable in minimal containers — easy to mistake 'compiles' for 'passes' |
 
 ## Hard rules
 
 - No vacuous asserts; no copy-pasted literals; no `is_ok()` where a value can
   be checked.
-- Environment CI cannot provide (mount points, real `/`) is not faked.
-  Redesign so the rule is enforced by construction — e.g. staging inside the
-  install root — and say so.
+- Environment CI cannot provide (mount points, real `/`, libarchive,
+  bubblewrap) is not faked. Redesign so the rule is enforced by construction —
+  e.g. staging inside the install root — and say so. Never `#[ignore]` a test
+  to make CI green.
+- A change to shared format or types always lands with a contract-test update
+  in `crates/common/tests/package_format.rs` — writer and reader together.
 - Scenarios and audit before any code; confirmation gate between them.
 - Every deliverable references the fixtures that exist; the skill never
   invents a second fixture system.
