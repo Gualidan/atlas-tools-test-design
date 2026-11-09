@@ -1,5 +1,5 @@
 ---
-name: atlas-tools-test-design
+name: atlas-test-design
 description: >
   Test-first design workflow for the atlas-tools workspace (Gualidan/atlas-tools)
   and repos structured like it. Covers all three crates: **atlas** (install,
@@ -14,7 +14,11 @@ description: >
   describes a change idea and expects tests with it, or asks to review whether a
   change is testable. Produces, in order: a failure audit of the planned change,
   a test scenario matrix, reusable invariant asserts, fixture code, and test
-  skeletons — and stops for user confirmation after the scenario matrix.
+  skeletons — and stops for user confirmation after the scenario matrix. The
+  run is vault-integrated: before designing it searches the user's Obsidian
+  vault (via the Obsidian MCP server) for notes with the same purpose — prior
+  test designs, incident and bug-journal entries — and after the work is
+  confirmed it records its full output as a new note placed alongside them.
 ---
 
 # Atlas-tools test-first design
@@ -35,8 +39,9 @@ parts of sisyphus (libarchive, bubblewrap) cannot run in minimal environments,
 so tests can pass locally while never actually running in CI.
 
 This skill exists so that detection happens at design time, not in review.
-Follow the steps in order. The order is the point: audit before scenarios,
-scenarios before code, user confirmation before anything long.
+Follow the steps in order. The order is the point: vault before audit, audit
+before scenarios, scenarios before code, user confirmation before anything
+long, and the vault note only after the work is confirmed.
 
 ## Step 0 — Ground yourself in the repo
 
@@ -63,6 +68,16 @@ Also: read the module(s) the change touches plus one level of callers, and note
 every early exit, database write, and filesystem mutation. If a file you need
 is not available, **ask for it** — a test designed against an imagined API is
 worse than no test.
+
+**Ground in the vault (Obsidian).** Use the Obsidian MCP server to search the
+user's vault for notes with the same purpose as this run: prior test-design
+notes, bug-journal and incident entries, and anything about the module or
+behavior being changed. Read the hits before designing anything — they supply
+scenario ideas, invariants, and incident details that Steps 1 and 2 would
+otherwise reinvent from scratch, and sometimes reveal this exact change was
+already designed once. Tool names vary by server (search / read / create
+note); if the MCP server is unavailable, say so in one line and continue —
+never silently skip. Keep every hit you found: Step 6 links to these notes.
 
 **Environment reality (affects sisyphus test design).** `compress-tools` needs
 system libarchive and builds run under bubblewrap — neither exists in minimal
@@ -149,6 +164,8 @@ name | scenario | expected outcome | how it fails on the current code
 Present the audit and the scenario matrix. Wait for the user to confirm scope.
 This gate is deliberate: scenarios are cheap to change now and expensive to
 change after fixtures exist. Do not write fixture code before this point.
+If the vault search found no folder where same-purpose notes live, also ask
+here where the Step 6 note should go — not after the work is done.
 
 ## Step 3 — Invariant asserts
 
@@ -196,6 +213,57 @@ for build-side changes:
   test that silently compiles-but-never-runs in CI is a vacuous assert with
   extra steps.
 
+### The recipe (atlas side)
+
+One fixture package, end to end, using only what `atlas/tests/fixtures/mod.rs`
+already provides. In order:
+
+1. **Workspace**: `let ws = Workspace::new()?;` — tempdir, keypair, runtime
+   config, repo DB, install DB and a default target root in one call. The
+   struct owns its `ConfigEnv` (it serializes `SISYPHUS_CONFIG_DIR` mutation
+   behind a mutex, sets assume-yes, restores env on drop). Only hand-roll a
+   standalone `ConfigEnv` if you must — and then never let the guard drop
+   early.
+2. **Publish**: `ws.publish("base", "1.0.0", 1, &[])?;` writes a signed
+   `{name}-{version}-{release}.sky` with a unique payload
+   (`{name}/{version}.txt`) *and* seeds the repo DB with the same deps —
+   one call, both sources. This is the matched-sources rule enforced by
+   construction; prefer it over raw `seed_repo_db_with_deps` whenever a sky
+   exists.
+3. **Custom payloads**: `ws.publish_with_entries(..., &[PayloadEntry::file(
+   "dir/file.txt", "x"), PayloadEntry::symlink("bin/lnk", "../dir/file.txt"),
+   ...])` when the test needs real files, modes or links. Give each package
+   its own payload dir (`dir/`, `bardir/`, ...): shared payload paths collide
+   on install and produce stale-literal asserts.
+4. **Hostile payloads**: `write_signed_sky_with_raw_entry(...)` builds one
+   fully controlled raw tar entry that bypasses path sanitization — evil paths
+   (`/etc/evil`, `dir/../..`), forbidden entry types, exotic modes. One crime
+   per test; this is also the closest thing to the poisoned-payload builder.
+5. **Act**: `ws.install(name)` / `ws.install_into(name, root)` /
+   `ws.uninstall(name)` / `ws.update(name)`; `ws.create_target_root("alt")`
+   for a second install root.
+6. **Read back the arrange, then assert**: `ws.assert_installed(name, version,
+   release)?` and `ws.assert_deps(name, &["base"])?` *before* the act phase;
+   afterwards `ws.row()`, `ws.deps()`, `ws.owned_paths()`,
+   `ws.get_update_log()`, `read_target_file(root, path)` and
+   `count(&conn, sql, params)` for exact numbers. `ws.set_metadata()` forces
+   `installed_at`/`install_reason` when a test needs a specific reason.
+7. **Invariants**: end every test with `ws.assert_no_staging_dirs()?` plus
+   whatever Step 3 helpers the scenario demands.
+
+Repo-DB-only rows (no sky on disk) use `seed_repo_db_with_deps(&path,
+&[(name, version, release, sky_path, deps)])`. If a sky *also* exists, its
+deps must match — otherwise the arrange dies three steps later as FK 787. A
+deliberate mismatch is built by publishing normally and then reseeding with
+different deps, and the test name must end in
+`_when_repo_db_and_sky_metadata_disagree`.
+
+On the sisyphus side there is no shared fixtures module yet: each test file
+(`repo_db.rs`, `fetch_archive_cache.rs`, `source_root.rs`) carries its own
+local `package()` / `metadata()` / `count()` helpers. Extend them in place;
+if a second file needs the same helper, promote it to a shared
+`sisyphus/tests/fixtures/mod.rs` — never copy it.
+
 ## Step 5 — Test skeletons
 
 Full arrange/act/assert for each confirmed scenario, using only the fixtures
@@ -207,6 +275,29 @@ from Step 4.
   code. A test that cannot fail is decoration, not a test.
 - Every assert must name what code change would make it fail. If you cannot
   name one, delete the assert.
+
+## Step 6 — Record the output in the vault
+
+Every completed run ends as a note in the user's Obsidian vault, written via
+the Obsidian MCP server. A run whose output lives only in chat is lost.
+
+- **Search before creating.** You already searched in Step 0. If one of those
+  notes covers this same change, extend it — append a dated section — instead
+  of creating a near-duplicate; otherwise create a new note.
+- **Place it with its own kind.** Put the note in the folder where the
+  same-purpose notes from Step 0 live. If the vault has no such folder, use
+  the location the user gave at the Gate.
+- **Title and metadata.** Follow the vault's existing convention if the Step 0
+  hits show one; otherwise title it `Test design — <short change name>` with
+  frontmatter tags for the crate and module and today's date.
+- **Content — what this run outputted**, in this order: the change in one
+  sentence; the numbered failure-audit findings; the scenario matrix as a
+  Markdown table (name | scenario | expected | how it fails); the fixtures
+  added or extended, with file paths; the invariant asserts used; the skeleton
+  locations (file + test function names); and each test's red check.
+- **Link, don't summarize away.** Wiki-link every vault note this run drew on
+  (`[[...]]`), especially incident and journal notes — the note is the graph
+  edge between this change and its history.
 
 ## Recurring failure patterns
 
@@ -238,3 +329,5 @@ each one; when reviewing an implementation, ask its detection question.
 - Scenarios and audit before any code; confirmation gate between them.
 - Every deliverable references the fixtures that exist; the skill never
   invents a second fixture system.
+- Search the vault before designing; write the Step 6 note after the work is
+  confirmed. A run without its vault note did not happen.
