@@ -8,10 +8,10 @@ description: >
   payload/metadata generation, signing, .sky writing, repo DB insertion), and
   common (shared types, sky verification, DB schemas). Use before implementation
   for features, bug fixes, refactors, behavior changes, test cases, or fixtures.
-  Produce the failure audit, scenario matrix, invariant asserts, fixture code,
-  and test skeletons; write the fixtures and tests rather than stopping at a
-  plan. Record the audit, matrix, fixtures, tests, and test-failure audit in an
-  Obsidian note without asking the user to confirm or approve the work.
+  Produce the failure audit, scenario matrix, invariant-assertion design, fixture
+  code, and test plans. Write fixture code only; never write production code or
+  test implementation code. Record the audit, matrix, fixtures, and test plan in
+  an Obsidian note without asking the user to confirm or approve the work.
 ---
 
 # Atlas-tools test-first design
@@ -26,8 +26,9 @@ computed outside their per-item loop, one-direction-only graph decisions, and
 writer/reader drift between sisyphus and atlas.
 
 Follow the steps in order, but do not stop for approval. The deliverable is
-working fixture and test code plus a note recording the design and results—not
-a proposal waiting for confirmation.
+fixture code plus a test design and a note recording the design and results—not
+production or test implementation code, and not a proposal waiting for
+confirmation.
 
 ## Step 0 — Ground yourself in the repo and vault
 
@@ -70,15 +71,15 @@ Repo DB and sky metadata can intentionally disagree, but name that scenario.
 Before listing tests, walk the change for these risks:
 
 1. **The `?`-walk:** For each early exit after the first filesystem or DB side
-effect, state what remains and who restores it. An exit with no rollback is a
-finding.
+   effect, state what remains and who restores it. An exit with no rollback is a
+   finding.
 2. **Decide-then-act:** Flag decisions made while mutating the same set being
-read. Prefer collecting/validating a complete snapshot before acting.
+   read. Prefer collecting/validating a complete snapshot before acting.
 3. **Loop invariants:** Ensure every per-item field, especially query results,
-is computed from the current iteration's bindings.
+   is computed from the current iteration's bindings.
 4. **Contract walk:** For changes to format, metadata, sky structure, signing,
-or schemas, identify both writer (sisyphus) and reader (atlas), and include a
-contract test in `crates/common/tests/package_format.rs`.
+   or schemas, identify both writer (sisyphus) and reader (atlas), and include a
+   contract test in `crates/common/tests/package_format.rs`.
 
 Record each finding as a numbered item with code location, detection question,
 and threatened invariant. Treat an empty audit as a result, not a reason to
@@ -86,7 +87,7 @@ omit the audit from the note.
 
 ## Step 2 — Scenario matrix
 
-Create one row per test:
+Create one row per proposed test:
 
 ```text
 name | scenario | expected outcome | how it fails on the current code
@@ -108,9 +109,9 @@ name | scenario | expected outcome | how it fails on the current code
 - Mark the regression scenario for every audit finding and say exactly how each
   proposed test fails on the current implementation.
 
-## Step 3 — Invariant asserts
+## Step 3 — Invariant-assertion design
 
-Write reusable assertions that tests can call, as appropriate:
+Identify reusable assertions that tests should call, as appropriate:
 
 1. No dangling dependency edges: every installed dependency remains installed.
 2. Root unchanged after failure: the target root is byte-identical to before
@@ -118,23 +119,30 @@ Write reusable assertions that tests can call, as appropriate:
 3. No staging leftovers under the root.
 4. DB and disk agree about owned files and install directories.
 
-Every scenario test must call at least one relevant invariant. Avoid generic
-assertions that cannot detect a specific regression.
+For each scenario, name at least one relevant invariant and explain what
+regression it detects. Do not write assertion implementation code; it is not
+fixture code.
 
 ## Step 4 — Write the fixtures
 
-**Actually implement the fixture helpers in the repository. Fixture code is a
-required deliverable, not an optional recommendation or a follow-up after user
-approval.** Extend the existing crate test helpers:
+**Fixture code is the only code this skill may write.** Implement or extend only
+test fixture helpers in the repository; do not write production code, test
+functions, test assertions, test scaffolding, or other executable code. Keep
+fixture changes limited to the fixture modules/files and fixture helper
+sections. If a necessary change cannot be made strictly within fixtures, report
+the blocker and describe the needed change without implementing it.
 
 - Atlas: `atlas/tests/fixtures/mod.rs` (`Workspace`). Use its `new`, `publish`,
   `publish_with_entries`, install/uninstall/update methods, and `assert_*`
-  helpers where applicable. Read the actual helper signatures before use.
-- Sisyphus: extend the relevant local helpers in `sisyphus/tests/`; if multiple
-  files need a helper, promote it to `sisyphus/tests/fixtures/mod.rs` rather
-  than copying it.
-- Common/format: use the existing package-format test helpers and cover both
-  writer and reader for a contract change.
+  helpers where applicable. Read the actual helper signatures before use. Do
+  not add test functions or assertions to consume the fixtures.
+- Sisyphus: extend fixture helpers in the relevant `sisyphus/tests/` fixture
+  module/file; if multiple test files need a helper, promote it to
+  `sisyphus/tests/fixtures/mod.rs` rather than copying it. Do not write or
+  modify test implementations.
+- Common/format: use or extend existing package-format fixture helpers only.
+  Describe the writer/reader contract tests that should use them, but do not
+  implement those tests.
 
 Fixture requirements:
 
@@ -151,26 +159,30 @@ Fixture requirements:
 - Use hostile raw entries only for the specific security/validation case being
   tested; one malformed condition per test where practical.
 
-For atlas, the common flow is `Workspace::new()`, publish matched repo/sky
-metadata with `publish` or `publish_with_entries`, assert the arrange, perform
-the operation, check concrete DB/disk outcomes, then check invariants and
-staging cleanup. Use `install_into`/`create_target_root` for alternate roots.
-Repo-DB-only fixtures may use `seed_repo_db_with_deps`; if a sky also exists,
-its deps must match unless the test deliberately exercises disagreement.
+For atlas, the common fixture flow is `Workspace::new()`, publish matched
+repo/sky metadata with `publish` or `publish_with_entries`, and verify fixture
+setup through existing fixture helpers where available. Describe the operation
+and expected DB/disk outcomes in the test plan; do not implement a test that
+performs the operation. Use existing `install_into`/`create_target_root`
+fixture helpers for alternate roots. Repo-DB-only fixtures may use
+`seed_repo_db_with_deps`; if a sky also exists, its deps must match unless the
+test deliberately exercises disagreement.
 
-## Step 5 — Write test skeletons
+## Step 5 — Write test plans, not test code
 
-**Implement the arrange/act/assert test skeletons for the scenario matrix using
-the fixtures from Step 4. Do not stop after describing proposed tests.**
-Tests should use concrete values: exact versions, file lists, and error
-messages, not just `is_ok()` where the result can be checked.
+For each row in the scenario matrix, provide an arrange/act/assert plan using
+the fixtures from Step 4. **Do not write or modify test skeletons or test
+implementations.** Plans may be prose or a Markdown table, but must not contain
+executable code, pseudocode that can be pasted as a test, or code snippets.
+Tests should specify concrete values: exact versions, file lists, and expected
+error messages, not just `is_ok()` where the result can be checked.
 
-For each test, record the red check: what assertion fails on current code and
-which bug/regression it detects. If possible in the available environment, run
-the focused tests and record the exact command and outcome. Do not claim tests
-were run if they were not. If implementation is explicitly out of scope or the
-repository is unavailable, state the blocker and still record the ready-to-use
-fixture/test plan in the note; do not request approval as a substitute.
+For each planned test, record the red check: which assertion would fail on
+current code and which bug/regression it detects. If possible in the available
+environment, run existing focused tests and record the exact command and
+outcome; do not add tests or claim tests were run if they were not. If test
+implementation is requested or necessary, state that it is outside this skill's
+allowed code-writing scope and provide the plan without implementing it.
 
 ## Step 6 — Write the Obsidian note automatically
 
@@ -191,15 +203,18 @@ Include, in order:
    applicable).
 3. Scenario matrix as a Markdown table: name, scenario, expected outcome, and
    how it fails on current code.
-4. Fixtures written/extended and their file paths.
-5. Invariant asserts used.
-6. Test skeletons/implementations, file paths, and test function names.
-7. Test-failure audit: each test's red check, expected/current failure behavior,
-   and the test command/result if actually run (or why it could not be run).
+4. Fixture helpers written/extended and their file paths (or the precise
+   blocker if fixture code could not be written).
+5. Invariants each planned test should check.
+6. Arrange/act/assert plans, file paths where tests belong, and proposed test
+   function names. These are plans only; do not include test code.
+7. Test-failure audit: each planned test's red check, expected/current failure
+   behavior, and the test command/result if existing tests were actually run
+   (or why they could not be run).
 8. Environment-gated tests and limitations.
 9. Wiki-links to relevant vault notes found in Step 0.
 
-If a planned fixture or test could not be written, document the precise blocker
+If a planned fixture helper could not be written, document the precise blocker
 and leave no ambiguity about what remains. Never imply that unimplemented work
 was completed.
 
@@ -219,15 +234,26 @@ was completed.
 
 ## Hard rules
 
+- **Fixture code is the sole exception to the no-code rule.** Write only fixture
+  helper code; never write production code, test implementation code, test
+  skeletons, assertions, or executable code outside fixture helpers.
+- Keep code edits confined to existing fixture modules/files and fixture helper
+  sections. If the fixture-only boundary is unclear or a change requires code
+  elsewhere, stop and report the blocker instead of expanding scope.
 - No vacuous asserts, copy-pasted fixture identities, or unchecked `is_ok()`
-  where a value can be checked.
+  where a value can be checked. Apply these as test-design criteria; do not write
+  assertion code.
 - Do not fake unavailable environment behavior or use `#[ignore]` to make CI
-  green. Redesign for testability where possible and state limitations.
-- Shared format/type changes include a contract-test update in
-  `crates/common/tests/package_format.rs` covering writer and reader.
-- Audit and scenario design precede fixture and test implementation, but there
-  is **no user-confirmation gate** between those steps.
-- Write the fixtures and test skeletons; do not return only a matrix or proposal.
-- Record the audit, scenario matrix, fixture work, tests, red checks, and run
-  results in an Obsidian note automatically, without asking for confirmation.
+  green. Recommend redesign for testability where possible and state
+  limitations; do not implement that redesign.
+- Shared format/type changes include a planned contract-test update in
+  `crates/common/tests/package_format.rs` covering writer and reader; do not
+  write the tests.
+- Audit and scenario design precede fixture work, but there is **no
+  user-confirmation gate** between those steps.
+- Write permitted fixture helpers and complete the test plans; do not return
+  only a matrix or proposal.
+- Record the audit, scenario matrix, fixture work, test plans, red checks, and
+  existing-test run results in an Obsidian note automatically, without asking
+  for confirmation.
 - Extend the existing fixture system; do not invent a parallel one.
