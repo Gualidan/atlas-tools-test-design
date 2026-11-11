@@ -25,6 +25,8 @@ In order, the skill produces:
 
 Copy this prompt and replace the bracketed sections to fit your change:
 
-> Use the `atlas-tools-test-design` skill before implementation. In **[crate/module, e.g. `atlas` / update flow]**, I want to **[describe the behavior change or bug fix]**. The expected behavior is **[specific outcome]**. Important constraints or known edge cases are **[constraints, failure cases, or “none known”]**. Please inspect **[repository/workspace or relevant files]** and the existing test fixtures; do not assume APIs that are not in the code. Search my Obsidian vault for related designs and incidents if the Obsidian MCP server is available. First give me the failure audit and scenario matrix, then stop for my confirmation before writing fixtures or test skeletons.
+```text
+Use the `atlas-tools-test-design` skill before implementation. In **[crate/module, e.g. `atlas` / update flow]**, I want to **[describe the behavior change or bug fix]**. The expected behavior is **[specific outcome]**. Important constraints or known edge cases are **[constraints, failure cases, or “none known”]**. Please inspect **[repository/workspace or relevant files]** and the existing test fixtures; do not assume APIs that are not in the code. Search my Obsidian vault for related designs and incidents if the Obsidian MCP server is available. First give me the failure audit and scenario matrix, then stop for my confirmation before writing fixtures or test skeletons.
+```
 
 You can adapt the bracketed details, but keep the confirmation gate: it lets you adjust the scenarios before the skill does the more detailed test-design work.
