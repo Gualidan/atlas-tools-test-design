@@ -1,32 +1,25 @@
-# A collection of skills I created mainly to work on [Atlas Tools](https://github.com/Gualidan/atlas-tools)
+# Gualidan's Agent Skills
 
-## `atlas-tools-test-design`
+A collection of reusable skills for AI coding agents.
 
-Use this skill **before implementing** a feature, bug fix, refactor, or other behavior change in the Atlas Tools workspace. It covers the `atlas`, `sisyphus`, and `crates/common` crates, and is also useful when you want test cases or fixtures designed for a proposed change.
+## `tdd-test-writer`
+
+A human-in-the-loop TDD workflow: the agent writes and verifies one behavior-focused failing test, then stops so you can implement the behavior. Once you report that your implementation is ready, the agent checks that test passes, records the result, and writes the next test. It never writes production code.
+
+### Install
+
+```sh
+npx skills add Gualidan/skills --skill tdd-test-writer
+```
 
 ### How to use it
 
-1. Make the `atlas-tools-test-design` skill available to your coding assistant (for example, by adding this repository to the assistant's skills setup).
-2. Start a request with the skill name and describe the change you want to make. Include the relevant crate or module, expected behavior, constraints, and any known failure cases. Point the assistant to the repository/workspace so it can inspect the actual code and existing test helpers.
-3. The skill first searches your Obsidian vault for related test designs, incident notes, and bug-journal entries, if the Obsidian MCP server is available. It then audits the proposed change and presents a test scenario matrix.
-4. **Review the audit and matrix and confirm or adjust the scope.** The skill intentionally stops here before writing fixture code or test skeletons.
-5. After confirmation, it develops the reusable invariants, fixtures, and test skeletons. Once the work is confirmed, it records the completed design in the relevant vault location. If Obsidian MCP is unavailable, the assistant should say so and continue without silently claiming it searched or saved a note.
+Ask the agent to use `tdd-test-writer`, describe the feature or bug, its expected behavior, and any constraints. Point the agent at the relevant repository. It will inspect the project's test conventions, write one test, verify that it fails for the expected reason, and hand it to you with pass criteria. It then waits for your implementation before checking GREEN and moving on to the next test.
 
-### What it outputs
-
-In order, the skill produces:
-
-- A failure audit identifying risky exits, mutation ordering, loop-specific values, and cross-crate format-contract concerns.
-- A test scenario matrix (`name | scenario | expected outcome | how it fails on current code`), including regression and failure-path coverage.
-- After you confirm the matrix: reusable invariant assertions, fixture recommendations or code, and arrange/act/assert test skeletons with a precise explanation of how each test catches a defect in the current code.
-- After the work is confirmed: a full design note in your Obsidian vault, linked to relevant notes found during the initial search.
+For each feature or bug fix, the skill also creates a separate code-free Obsidian note and updates it each time a test is added or verified. The note includes implementation recommendations in prose, never code. If Obsidian MCP is unavailable, the agent must say so and provide a note draft rather than claiming it saved one.
 
 ### Example prompt
 
-Copy this prompt and replace the bracketed sections to fit your change:
-
 ```text
-Use the `atlas-tools-test-design` skill before implementation. In **[crate/module, e.g. `atlas` / update flow]**, I want to **[describe the behavior change or bug fix]**. The expected behavior is **[specific outcome]**. Important constraints or known edge cases are **[constraints, failure cases, or “none known”]**. Please inspect **[repository/workspace or relevant files]** and the existing test fixtures; do not assume APIs that are not in the code. Search my Obsidian vault for related designs and incidents if the Obsidian MCP server is available. First give me the failure audit and scenario matrix, then stop for my confirmation before writing fixtures or test skeletons.
+Use the tdd-test-writer skill to add [feature or bug fix]. Expected behavior: [describe outcomes]. Constraints: [list constraints or say none known]. Write and verify one failing test, then stop so I can implement it. Do not modify production code. Keep a code-free Obsidian note for this feature and update it after each test.
 ```
-
-You can adapt the bracketed details, but keep the confirmation gate: it lets you adjust the scenarios before the skill does the more detailed test-design work.
